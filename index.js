@@ -7,29 +7,35 @@ app.use(express.json({ limit: "50mb" }));
 
 app.get("/", (req, res) => res.send("OK"));
 
-app.post("/render", async (req, res) => {
+const JOBS = new Map(); // job_id -> {status, error, video_file}
+
+app.post("/render", (req, res) => {
+  const { job_id, scenes } = req.body;
+
+  if (!job_id) return res.status(400).json({ error: "Missing job_id" });
+  if (!Array.isArray(scenes) || scenes.length === 0) {
+    return res.status(400).json({ error: "No scenes provided" });
+  }
+
+  // ghi trạng thái
+  JOBS.set(job_id, { status: "RENDERING" });
+
+  // trả ngay để tránh timeout 502
+  res.status(202).json({ status: "RENDERING", job_id });
+
   try {
-    const { job_id, scenes } = req.body;
-
-    if (!job_id) return res.status(400).json({ error: "Missing job_id" });
-    if (!Array.isArray(scenes) || scenes.length === 0) {
-      return res.status(400).json({ error: "No scenes provided" });
-    }
-
-    // 1) Tạo text file từ scenes
     const textContent = scenes
       .map((s, i) => `Scene ${i + 1}: ${(s.onscreen_text || "").toString()}`)
       .join("\n");
-    fs.writeFileSync("/tmp/text.txt", textContent, "utf8");
+    fs.writeFileSync(`/tmp/text_${job_id}.txt`, textContent, "utf8");
 
     const output = `/tmp/output_${job_id}.mp4`;
 
-    // 2) Chạy ffmpeg bằng spawn(args) để KHÔNG bị lỗi xuống dòng
     const args = [
       "-y",
       "-f", "lavfi",
       "-i", "color=c=black:s=1080x1920:d=12",
-      "-vf", "drawtext=textfile=/tmp/text.txt:fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=10",
+      "-vf", `drawtext=textfile=/tmp/text_${job_id}.txt:fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=10`,
       "-c:v", "libx264",
       "-pix_fmt", "yuv420p",
       output
@@ -39,20 +45,27 @@ app.post("/render", async (req, res) => {
 
     let stderr = "";
     ff.stderr.on("data", (d) => (stderr += d.toString()));
+
     ff.on("close", (code) => {
       if (code !== 0) {
-        return res.status(500).json({ error: "ffmpeg_failed", details: stderr.slice(-2000) });
+        JOBS.set(job_id, { status: "ERROR", error: stderr.slice(-2000) });
+      } else {
+        JOBS.set(job_id, { status: "DONE", video_file: output });
       }
+    });
 
-      // Demo: trả link giả (bước sau mình sẽ cho upload Drive và trả link thật)
-      res.json({
-        status: "DONE",
-        video_file: output
-      });
+    ff.on("error", (err) => {
+      JOBS.set(job_id, { status: "ERROR", error: err.message });
     });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    JOBS.set(job_id, { status: "ERROR", error: e.message });
   }
+});
+
+app.get("/status/:jobId", (req, res) => {
+  const job = JOBS.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  res.json(job);
 });
 
 const PORT = process.env.PORT || 3000;
