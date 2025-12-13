@@ -1,3 +1,6 @@
+app.get("/ping", (req, res) => res.status(200).send("pong"));
+app.post("/echo", (req, res) => res.status(200).json({ ok: true, body: req.body }));
+
 import express from "express";
 import { spawn } from "child_process";
 import fs from "fs";
