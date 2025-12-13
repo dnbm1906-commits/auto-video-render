@@ -1,0 +1,13 @@
+{
+  "name": "auto-video-render",
+  "version": "1.0.0",
+  "description": "Automatic short video rendering server using FFmpeg",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
