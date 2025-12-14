@@ -1,6 +1,3 @@
-app.get("/ping", (req, res) => res.status(200).send("pong"));
-app.post("/echo", (req, res) => res.status(200).json({ ok: true, body: req.body }));
-
 import express from "express";
 import { spawn } from "child_process";
 import fs from "fs";
@@ -8,9 +5,13 @@ import fs from "fs";
 const app = express();
 app.use(express.json({ limit: "50mb" }));
 
-app.get("/", (req, res) => res.send("OK"));
+app.get("/", (req, res) => res.status(200).send("OK"));
+app.get("/ping", (req, res) => res.status(200).send("pong"));
+app.post("/echo", (req, res) => res.status(200).json({ ok: true, body: req.body }));
 
-const JOBS = new Map(); // job_id -> {status, error, video_file}
+// In-memory job store (demo). Với Free plan có thể restart nên job mất.
+// Bước sau nâng cấp: lưu job vào Redis/DB hoặc gửi status về Sheets ngay.
+const JOBS = new Map();
 
 app.post("/render", (req, res) => {
   const { job_id, scenes } = req.body;
@@ -20,25 +21,31 @@ app.post("/render", (req, res) => {
     return res.status(400).json({ error: "No scenes provided" });
   }
 
-  // ghi trạng thái
+  // set status
   JOBS.set(job_id, { status: "RENDERING" });
 
-  // trả ngay để tránh timeout 502
+  // trả ngay để tránh timeout proxy (tránh 502)
   res.status(202).json({ status: "RENDERING", job_id });
 
   try {
+    // text overlay from scenes
     const textContent = scenes
       .map((s, i) => `Scene ${i + 1}: ${(s.onscreen_text || "").toString()}`)
       .join("\n");
-    fs.writeFileSync(`/tmp/text_${job_id}.txt`, textContent, "utf8");
+
+    const textPath = `/tmp/text_${job_id}.txt`;
+    fs.writeFileSync(textPath, textContent, "utf8");
 
     const output = `/tmp/output_${job_id}.mp4`;
+
+    // NOTE: drawtext cần font; Dockerfile nên cài fonts-dejavu-core để ổn định
+    const vf = `drawtext=textfile=${textPath}:fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=10`;
 
     const args = [
       "-y",
       "-f", "lavfi",
       "-i", "color=c=black:s=1080x1920:d=12",
-      "-vf", `drawtext=textfile=/tmp/text_${job_id}.txt:fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2:line_spacing=10`,
+      "-vf", vf,
       "-c:v", "libx264",
       "-pix_fmt", "yuv420p",
       output
@@ -53,13 +60,15 @@ app.post("/render", (req, res) => {
       if (code !== 0) {
         JOBS.set(job_id, { status: "ERROR", error: stderr.slice(-2000) });
       } else {
-        JOBS.set(job_id, { status: "DONE", video_file: output });
+        // demo: chưa có link public
+        JOBS.set(job_id, { status: "DONE", video_url: "", video_file: output });
       }
     });
 
     ff.on("error", (err) => {
       JOBS.set(job_id, { status: "ERROR", error: err.message });
     });
+
   } catch (e) {
     JOBS.set(job_id, { status: "ERROR", error: e.message });
   }
@@ -68,7 +77,7 @@ app.post("/render", (req, res) => {
 app.get("/status/:jobId", (req, res) => {
   const job = JOBS.get(req.params.jobId);
   if (!job) return res.status(404).json({ error: "Job not found" });
-  res.json(job);
+  res.status(200).json(job);
 });
 
 const PORT = process.env.PORT || 3000;
