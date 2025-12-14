@@ -82,12 +82,13 @@ app.get("/status/:jobId", (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.get("/download/:jobId", (req, res) => {
-  const job = JOBS.get(req.params.jobId);
+  const id = req.params.jobId;
+  const job = JOBS.get(id);
   if (!job) return res.status(404).send("Job not found");
-  if (job.status !== "DONE") return res.status(400).send("Job not done");
+  if (job.status !== "DONE") return res.status(400).send("Job not done yet");
   if (!job.video_file) return res.status(400).send("No video file");
 
-  res.download(job.video_file, `output_${req.params.jobId}.mp4`);
+  return res.download(job.video_file, `output_${id}.mp4`);
 });
 
 app.listen(PORT, () => console.log("🚀 Render server running on port", PORT));
